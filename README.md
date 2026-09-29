@@ -14,6 +14,22 @@ AncharView is a cross-platform MCP server for desktop agents. It combines access
 
 `observe_screen` also accepts `detail=minimal|interactive|full`: minimal keeps task matches and focus, interactive (default) keeps relevant controls and their ancestors, and full returns the bounded tree. `max_nodes` bounds both traversal and returned context. The result reports inspected and filtered node counts so the agent can request more detail when needed.
 
+## Source layout
+
+All application source is tracked under `src/ancharview/`:
+
+```text
+src/ancharview/
+	server.py       MCP tools, task relevance, context filtering, and vision policy
+	desktop.py      Windows UIA and Linux AT-SPI adapters, element actions, capture
+	__main__.py     Python module entry point
+	__init__.py     Package metadata
+tests/
+	test_vision_policy.py
+```
+
+The old C# source was replaced during the cross-platform migration. Local `.NET` `bin/` and `obj/` folders, Python virtualenvs, bytecode, and editable-install metadata are generated artifacts, not missing source; `.gitignore` excludes them from Git.
+
 ## Platforms
 
 - Windows 10 or later: Windows UI Automation through `pywinauto`.
@@ -58,3 +74,5 @@ Linux:
 The server uses MCP stdio. Its VS Code registration in `.vscode/mcp.json` uses the Windows virtualenv path; on Linux, change `command` to `${workspaceFolder}/.venv/bin/python`. Diagnostics go to stderr. A task-aware call can be as simple as `observe_screen(task_goal="click the Save button")`. For a visual task, use `task_goal="compare the chart colors"`; `auto` will include the window image alongside structured nodes.
 
 AncharView only reads or changes the desktop when the connected agent calls a tool. It does not send screen content to a remote service itself. Element IDs are process-local and expire after two minutes.
+
+For the implementation history, design decisions, verification, and current limitations, see [BAO_CAO.md](BAO_CAO.md).
