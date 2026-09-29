@@ -74,6 +74,7 @@ Kết quả nêu số node đã kiểm tra, số node được trả, trạng th
 ## 5. Kiểm tra đã chạy
 
 - `pytest -q`: 10 test đạt.
+- Sau đợt hardening P0: `pytest -q` đạt 18 test; bổ sung kiểm tra thiếu bounds, foreground Linux mơ hồ và điều kiện coordinate fallback.
 - `compileall`: source và test Python biên dịch cú pháp thành công.
 - MCP stdio smoke test: initialize và tools/list thành công; client thấy đủ năm tool và schema `detail` có `minimal`, `interactive`, `full`.
 - Windows runtime smoke test: UIA đọc được 30 node của cửa sổ foreground với giới hạn node; không chụp ảnh hoặc gửi input trong bước xác minh đó.
@@ -86,10 +87,10 @@ Kết quả nêu số node đã kiểm tra, số node được trả, trạng th
 - Chưa có adapter Chrome DevTools Protocol/DOM, hệ thống event/diff UI, `find_elements`, scroll, focus-window, wait-for, clipboard, allowlist ứng dụng hoặc bước xác nhận action nguy hiểm.
 - Quyết định gửi ảnh và mức relevance hiện dựa trên từ khóa/độ phủ accessibility; có thể cần tinh chỉnh với agent và ứng dụng thực tế.
 - Một số ứng dụng canvas/custom-rendered, remote desktop hoặc chạy quyền cao có thể không công bố đủ UIA/AT-SPI. Wayland có thể từ chối capture nếu compositor hoặc công cụ chụp không cho phép.
-- Khi không lấy được bounds cửa sổ, capture hiện có thể chụp monitor chính trên Windows/X11 hoặc toàn output Wayland; metadata vẫn ghi `selected-window crop`. Không nên xem giới hạn crop là bảo đảm trong mọi trường hợp cho tới khi xử lý fail-closed.
-- Trên Linux, nếu không tìm thấy cửa sổ có trạng thái AT-SPI `ACTIVE`, backend hiện lấy cửa sổ đầu tiên trong danh sách. Thứ tự đó không đảm bảo là foreground.
-- Windows UIA lấy danh sách `children()` trước khi cắt theo ngân sách node; ứng dụng có container rất rộng vẫn có thể tốn thời gian/bộ nhớ vượt kỳ vọng của `max_nodes`.
-- Windows click fallback sang `click_input()` khi `invoke()` ném bất kỳ exception nào. Chưa có bước xác minh target vẫn visible/đúng bounds ngay trước input hoặc xác minh trạng thái sau action.
+- **Đã xử lý:** capture từ chối khi thiếu bounds hoặc bounds không hợp lệ; không còn fallback sang monitor/toàn output. Khi capture bị từ chối, `observe_screen` trả lỗi vision thay vì ảnh ngoài vùng đã chọn.
+- **Đã xử lý:** Linux chỉ nhận foreground khi AT-SPI xác định đúng một cửa sổ `ACTIVE`; trường hợp 0 hoặc nhiều cửa sổ active yêu cầu Agent truyền `window_id` tường minh.
+- Windows UIA vẫn materialize `children()` trước khi cắt theo ngân sách node; ứng dụng có container rất rộng vẫn có thể tốn thời gian/bộ nhớ vượt kỳ vọng của `max_nodes`.
+- **Giảm rủi ro, chưa triệt để:** trước coordinate fallback, Windows kiểm tra cửa sổ snapshot vẫn foreground, bounds không đổi, control visible và enabled. Chưa xác minh hậu điều kiện sau click và chưa có consent riêng cho action nguy hiểm.
 - Whitelist role dùng để bỏ tên trường nhập là heuristic theo role phổ biến, không phải lớp DLP tổng quát; ứng dụng tùy biến có thể công bố role khác.
 
 ## 7. Lịch sử Git liên quan
@@ -105,17 +106,18 @@ Báo cáo này mô tả phạm vi đã triển khai; các mục trong phần gi�
 
 ### Kết luận ngắn
 
-AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giám sát**, chưa nên xem là agent điều khiển desktop production hoặc chạy không giám sát. Windows đã qua smoke test đọc UIA và MCP; chưa có end-to-end test thao tác ứng dụng. Linux mới được rà code, chưa chạy trên desktop Linux thật. Quan trọng nhất, chế độ tự đính kèm vision có thể gửi phạm vi rộng hơn cửa sổ được chọn khi không lấy được bounds.
+AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giám sát**, chưa nên xem là agent điều khiển desktop production hoặc chạy không giám sát. Windows đã qua smoke test đọc UIA và MCP; chưa có end-to-end test thao tác ứng dụng. Linux mới được rà code, chưa chạy trên desktop Linux thật. Ba guard P0 về phạm vi capture, foreground Linux và coordinate fallback đã được thêm; consent/audit cho action rủi ro vẫn còn thiếu.
 
 ### Phát hiện ưu tiên cao
 
-1. **Phạm vi ảnh có thể rộng hơn metadata báo.** `DesktopBackend.capture()` dùng monitor chính nếu `window.bounds` không có; nhánh Wayland gọi `grim` không có geometry cũng chụp toàn output. `observe_screen` vẫn khai báo `scope="selected-window crop"`. Vì `auto` có thể tự yêu cầu ảnh khi accessibility yếu, đây vừa là rủi ro riêng tư vừa làm agent hiểu sai phạm vi quan sát. Trước khi dùng trên màn hình nhạy cảm, cần fail closed nếu không xác định được vùng cửa sổ, hoặc trả rõ `scope=display` và yêu cầu opt-in riêng.
-2. **Foreground Linux chưa xác định chắc chắn.** Nếu AT-SPI không đánh dấu `ACTIVE`, `foreground_window()` chọn `windows[0]`. Agent có thể hành động trên nhầm app mà không biết. Nên trả lỗi “không xác định được foreground” hoặc dùng nguồn focus đáng tin hơn thay vì đoán.
-3. **Fallback click Windows thiếu xác minh.** Mọi lỗi từ `invoke()` đều dẫn tới `click_input()`. Lỗi do phần tử stale hoặc UI đổi có thể tạo input tọa độ không còn trỏ vào target ban đầu. Cần kiểm tra ID còn hợp lệ, visibility/bounds và cửa sổ sở hữu target trước fallback; trả lỗi nếu không xác minh được.
+1. **Đã xử lý: phạm vi ảnh thiếu bounds.** `DesktopBackend.capture()` fail-closed nếu không có bounds hợp lệ; test bao phủ thiếu bounds và kích thước rỗng. Ảnh tự động không còn chuyển thành capture cả monitor/toàn output trong các trường hợp này.
+2. **Đã xử lý: Linux không đoán foreground.** Backend chỉ trả về khi có đúng một cửa sổ `ACTIVE`; nếu không thì trả lỗi yêu cầu chọn `window_id`.
+3. **Đã giảm rủi ro: fallback click Windows.** Cache giữ window ID và bounds tại thời điểm quan sát. Coordinate fallback chỉ thực hiện nếu cùng window còn foreground, bounds không đổi, control visible và enabled. Vẫn cần test UIA thật cho stale element và xác minh hậu điều kiện.
 4. **Chưa có guard cho hành động rủi ro cao.** `click_element` có thể nhấn Send/Delete/Pay giống như nút thông thường; chưa có allowlist, consent hay audit log. Chỉ dùng với người giám sát cho tới khi có chính sách xác nhận hành động không thể đảo ngược.
 
 ### Phát hiện ưu tiên tiếp theo
 
+- Chưa có consent, allowlist hoặc audit log cho action không thể đảo ngược; không chạy tự động Send/Delete/Pay.
 - `max_nodes` giới hạn số node được xếp vào kết quả, nhưng trên Windows `wrapper.children()` tạo danh sách con trước khi cắt; giao diện có container rất rộng vẫn có thể chậm hoặc tốn bộ nhớ.
 - Matching task và chọn vision dựa trên chuỗi từ khóa. Từ đồng nghĩa, ngôn ngữ khác, mục tiêu mơ hồ và substring trùng có thể làm chọn sai node hoặc bật/tắt ảnh không như mong muốn.
 - Test hiện tập trung vào policy thuần. Chưa có test backend giả lập cho stale element, cửa sổ không active, thiếu bounds, lỗi chụp, disabled control, hay kết quả action; chưa có regression test UIA thật.
@@ -126,14 +128,14 @@ AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giá
 
 ### P0: bảo vệ desktop và dữ liệu
 
-- Không chụp toàn màn hình ngầm khi mục tiêu là crop cửa sổ. Nếu bounds thiếu, báo lỗi hoặc yêu cầu agent/user bật capture toàn display một cách tường minh.
-- Không đoán foreground Linux. Báo trạng thái không xác định để agent hỏi lại hoặc yêu cầu chọn `window_id`.
-- Trước coordinate fallback, xác minh element còn visible, bounds hợp lệ, cửa sổ vẫn đúng; sau action trả method và kết quả xác minh, không chỉ thông báo đã gửi input.
-- Thêm guard/consent cho nút và action có khả năng gửi, xóa, mua hoặc thay đổi dữ liệu không thể hoàn tác; log action ở local với dữ liệu nhạy cảm đã loại bỏ.
+- [x] Không chụp toàn màn hình ngầm khi bounds cửa sổ thiếu; fail-closed.
+- [x] Không đoán foreground Linux; yêu cầu chọn `window_id` nếu trạng thái `ACTIVE` không duy nhất.
+- [x] Kiểm tra foreground, bounds, visibility và enabled trước coordinate fallback Windows.
+- [ ] Thêm consent cho action có khả năng gửi, xóa, mua hoặc thay đổi dữ liệu không thể hoàn tác; bổ sung audit log local đã loại dữ liệu nhạy cảm.
 
 ### P1: chứng minh dùng được trên hai nền tảng
 
-- Tạo test backend giả lập cho thiếu bounds, không có active window, cây rỗng, stale IDs, node cap, action lỗi và redaction.
+- Đã có unit tests cho thiếu bounds, trạng thái active 0/nhiều cửa sổ và điều kiện fallback; tiếp tục tạo test backend cho cây rỗng, stale IDs, node cap, lỗi action và redaction.
 - Chạy checklist thủ công trên Windows 10/11 và Linux GNOME/X11; sau đó kiểm tra Wayland riêng với quyền capture thực tế.
 - Dùng app thử nghiệm không nhạy cảm (ví dụ Notepad/text editor) để xác minh list → observe → click → set_text; xác nhận không đọc lại nội dung nhập và ảnh đúng vùng.
 - Đo thời gian và kích thước kết quả trên UI nhỏ, UI nhiều node và app custom-rendered để chọn mặc định `max_nodes` có cơ sở.
@@ -149,8 +151,26 @@ AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giá
 
 Chỉ thử trên desktop không nhạy cảm và có người theo dõi. Trên Windows, ưu tiên task đọc hoặc thao tác có thể đảo ngược; đặt `visual_mode="never"` khi không cần ảnh cho tới khi P0 về bounds được xử lý. Không bật agent tự hành cho gửi/xóa/thanh toán. Trên Linux, coi backend là chưa xác nhận cho tới khi chạy checklist AT-SPI trên desktop thật.
 
-Đánh giá này là code review theo source hiện tại, không phải chứng nhận an toàn hoặc kết quả kiểm thử Linux. Các mục P0/P1 cần được xử lý và kiểm tra trước khi giới thiệu AncharView là công cụ điều khiển desktop dùng production.
+Đánh giá này là code review theo source hiện tại, không phải chứng nhận an toàn hoặc kết quả kiểm thử Linux. Các P0 đã đánh dấu hoàn thành mới có unit test cho guard logic; vẫn cần kiểm thử Linux thật, test UIA fallback và consent/audit trước khi giới thiệu AncharView là công cụ điều khiển desktop dùng production.
 
 ## 10. Giấy phép
 
 Repo sử dụng Apache License 2.0. Toàn văn nằm trong `LICENSE`, README liên kết tới điều khoản, và metadata package khai báo SPDX `Apache-2.0`. Không tự điền chủ sở hữu bản quyền vào mẫu phụ lục; tên chủ sở hữu cụ thể cần được chủ dự án xác nhận nếu muốn thêm copyright notice riêng.
+
+## 11. Mục tiêu kết nối Agent
+
+Yêu cầu sản phẩm do chủ dự án bổ sung: AncharView cần kết nối dễ dàng với mọi Agent có khả năng tương tác PC.
+
+### Ý nghĩa thực tế
+
+- MCP là giao diện tích hợp chuẩn: mọi Agent có MCP client và hỗ trợ tool qua stdio có thể dùng cùng bộ tool mà không cần AncharView biết nhà cung cấp Agent.
+- Không thể hứa tương thích trực tiếp với Agent không hỗ trợ MCP. Những Agent đó cần MCP bridge/adapter hoặc transport mà cả hai phía cùng hỗ trợ.
+- Hiện cấu hình có sẵn tập trung vào VS Code; Linux còn phải sửa đường dẫn interpreter thủ công. Vì vậy khả năng tương thích giao thức đã có, nhưng trải nghiệm “kết nối dễ dàng với tất cả Agent” chưa hoàn tất.
+
+### Điều kiện để đạt mục tiêu
+
+- Giữ schema tool trung lập với nhà cung cấp, có mô tả/JSON schema rõ và kiểm thử bằng MCP Inspector hoặc client độc lập.
+- Cung cấp hướng dẫn cấu hình ngắn cho các MCP host phổ biến; xác minh cài đặt sạch trên Windows và Linux.
+- Cung cấp một lệnh khởi chạy ổn định qua virtualenv/package, tránh cấu hình phụ thuộc đường dẫn Windows/Linux.
+- Chỉ bổ sung HTTP/Streamable HTTP khi có nhu cầu Agent cụ thể; nếu bật, giới hạn localhost, xác thực và quyền truy cập desktop rõ ràng.
+- Duy trì test tương thích giao thức độc lập với OS; backend UIA/AT-SPI vẫn là phần riêng theo nền tảng.

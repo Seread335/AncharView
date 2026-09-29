@@ -1,6 +1,12 @@
 import unittest
 
-from ancharview.desktop import _is_text_value_role
+from ancharview.desktop import (
+    DesktopBackend,
+    Window,
+    _can_coordinate_fallback,
+    _is_text_value_role,
+    _select_active_window,
+)
 from ancharview.server import _select_context, _visual_decision
 
 
@@ -78,6 +84,63 @@ class SensitiveFieldTests(unittest.TestCase):
         self.assertFalse(_is_text_value_role("windows", "Text"))
         self.assertFalse(_is_text_value_role("linux", "label"))
         self.assertFalse(_is_text_value_role("windows", "Button"))
+
+
+class CaptureSafetyTests(unittest.TestCase):
+    def test_capture_fails_closed_without_window_bounds(self) -> None:
+        window = Window("window-1", "Test", None, None)
+
+        with self.assertRaisesRegex(RuntimeError, "bounds are unavailable"):
+            DesktopBackend().capture(window)
+
+
+class LinuxForegroundTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.windows = [
+            Window("linux-1", "First", 1, None),
+            Window("linux-2", "Second", 2, None),
+        ]
+
+    def test_returns_the_single_active_window(self) -> None:
+        selected = _select_active_window(self.windows, {"linux-2"})
+
+        self.assertEqual(selected.window_id, "linux-2")
+
+    def test_does_not_guess_when_no_window_is_active(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "explicit window_id"):
+            _select_active_window(self.windows, set())
+
+    def test_does_not_guess_when_multiple_windows_are_active(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "exactly one active window"):
+            _select_active_window(self.windows, {"linux-1", "linux-2"})
+
+
+class CoordinateFallbackTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.bounds = {"x": 10, "y": 20, "width": 100, "height": 30}
+
+    def test_allows_fallback_only_for_unchanged_foreground_target(self) -> None:
+        self.assertTrue(
+            _can_coordinate_fallback("123", self.bounds, "123", self.bounds, True, True)
+        )
+
+    def test_rejects_fallback_when_window_is_not_foreground(self) -> None:
+        self.assertFalse(
+            _can_coordinate_fallback("123", self.bounds, "456", self.bounds, True, True)
+        )
+
+    def test_rejects_fallback_when_bounds_changed_or_control_unavailable(self) -> None:
+        moved = {**self.bounds, "x": 11}
+        self.assertFalse(_can_coordinate_fallback("123", self.bounds, "123", moved, True, True))
+        self.assertFalse(_can_coordinate_fallback("123", self.bounds, "123", self.bounds, False, True))
+        self.assertFalse(_can_coordinate_fallback("123", self.bounds, "123", self.bounds, True, False))
+        self.assertFalse(_can_coordinate_fallback("123", None, "123", None, True, True))
+
+    def test_capture_fails_closed_with_empty_window_bounds(self) -> None:
+        window = Window("window-1", "Test", None, {"x": 0, "y": 0, "width": 0, "height": 10})
+
+        with self.assertRaisesRegex(RuntimeError, "bounds are unavailable"):
+            DesktopBackend().capture(window)
 
 
 if __name__ == "__main__":

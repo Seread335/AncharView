@@ -27,6 +27,8 @@ class CachedElement:
     platform: str
     value: Any
     created_at: float
+    window_id: str | None = None
+    bounds: dict[str, int] | None = None
 
 
 ELEMENT_TTL_SECONDS = 120
@@ -44,28 +46,64 @@ def _is_text_value_role(platform: str, role: str) -> bool:
     return role.casefold() in _TEXT_VALUE_ROLES.get(platform, set())
 
 
+def _select_active_window(windows: list[Window], active_window_ids: set[str]) -> Window:
+    active_windows = [window for window in windows if window.window_id in active_window_ids]
+    if len(active_windows) != 1:
+        raise RuntimeError(
+            "AT-SPI could not identify exactly one active window. Call list_windows and pass an explicit window_id."
+        )
+    return active_windows[0]
+
+
+def _can_coordinate_fallback(
+    observed_window_id: str | None,
+    observed_bounds: dict[str, int] | None,
+    foreground_window_id: str,
+    current_bounds: dict[str, int] | None,
+    visible: bool,
+    enabled: bool,
+) -> bool:
+    return bool(
+        observed_window_id
+        and observed_window_id == foreground_window_id
+        and observed_bounds
+        and current_bounds == observed_bounds
+        and visible
+        and enabled
+    )
+
+
 def _new_id(prefix: str) -> str:
     global _next_id
     _next_id += 1
     return f"{prefix}{_next_id:x}"
 
 
-def cache_element(platform: str, value: Any) -> str:
+def cache_element(
+    platform: str,
+    value: Any,
+    window_id: str | None = None,
+    bounds: dict[str, int] | None = None,
+) -> str:
     element_id = _new_id("e")
-    _elements[element_id] = CachedElement(platform, value, time.monotonic())
+    _elements[element_id] = CachedElement(platform, value, time.monotonic(), window_id, bounds)
     while len(_elements) > MAX_CACHED_ELEMENTS:
         _elements.pop(next(iter(_elements)))
     return element_id
 
 
 def resolve_element(element_id: str, platform: str) -> Any:
+    return resolve_cached_element(element_id, platform).value
+
+
+def resolve_cached_element(element_id: str, platform: str) -> CachedElement:
     cached = _elements.get(element_id)
     if cached is None or cached.platform != platform:
         raise ValueError("Unknown element_id. Call observe_screen and use a recent ID.")
     if time.monotonic() - cached.created_at > ELEMENT_TTL_SECONDS:
         _elements.pop(element_id, None)
         raise ValueError("This element_id expired. Call observe_screen for a fresh ID.")
-    return cached.value
+    return cached
 
 
 class DesktopBackend:
@@ -88,16 +126,20 @@ class DesktopBackend:
 
     def capture(self, window: Window) -> bytes:
         bounds = window.bounds
+        if (
+            bounds is None
+            or not {"x", "y", "width", "height"}.issubset(bounds)
+            or bounds["width"] <= 0
+            or bounds["height"] <= 0
+        ):
+            raise RuntimeError("Cannot safely capture the selected window because its bounds are unavailable or invalid.")
+
         if sys.platform.startswith("linux") and os.environ.get("WAYLAND_DISPLAY"):
             grim = shutil.which("grim")
             if not grim:
                 raise RuntimeError("Wayland capture needs grim; the compositor may otherwise deny screenshots.")
-            geometry = None
-            if bounds:
-                geometry = f"{bounds['x']},{bounds['y']} {bounds['width']}x{bounds['height']}"
-            command = [grim]
-            if geometry:
-                command.extend(["-g", geometry])
+            geometry = f"{bounds['x']},{bounds['y']} {bounds['width']}x{bounds['height']}"
+            command = [grim, "-g", geometry]
             command.append("-")
             result = subprocess.run(command, capture_output=True, check=False)
             if result.returncode:
@@ -106,16 +148,12 @@ class DesktopBackend:
             return result.stdout
 
         with mss() as screenshotter:
-            area = (
-                {
-                    "left": bounds["x"],
-                    "top": bounds["y"],
-                    "width": bounds["width"],
-                    "height": bounds["height"],
-                }
-                if bounds
-                else screenshotter.monitors[1]
-            )
+            area = {
+                "left": bounds["x"],
+                "top": bounds["y"],
+                "width": bounds["width"],
+                "height": bounds["height"],
+            }
             shot = screenshotter.grab(area)
             image = PillowImage.frombytes("RGB", shot.size, shot.rgb)
             output = BytesIO()
@@ -185,8 +223,8 @@ class WindowsBackend(DesktopBackend):
                 control_type = str(getattr(info, "control_type", "Control"))
                 name = "" if _is_text_value_role(self.name, control_type) else str(wrapper.window_text() or "")
                 automation_id = str(getattr(info, "automation_id", "") or "")
-                element_id = cache_element(self.name, wrapper)
                 rect = self._rect(wrapper)
+                element_id = cache_element(self.name, wrapper, window.window_id, rect)
                 patterns = _windows_patterns(control_type)
                 nodes.append({
                     "element_id": element_id,
@@ -216,13 +254,31 @@ class WindowsBackend(DesktopBackend):
         return nodes, truncated or bool(pending)
 
     def click(self, element_id: str) -> str:
-        wrapper = resolve_element(element_id, self.name)
+        cached = resolve_cached_element(element_id, self.name)
+        wrapper = cached.value
         if not wrapper.is_enabled():
             raise RuntimeError("The requested element is disabled.")
         try:
             wrapper.invoke()
             return "Element invoked through UI Automation."
-        except Exception:
+        except Exception as error:
+            try:
+                current_bounds = self._rect(wrapper)
+                foreground_window_id = str(int(ctypes.windll.user32.GetForegroundWindow()))
+                safe_to_fallback = _can_coordinate_fallback(
+                    cached.window_id,
+                    cached.bounds,
+                    foreground_window_id,
+                    current_bounds,
+                    bool(wrapper.is_visible()),
+                    bool(wrapper.is_enabled()),
+                )
+            except Exception:
+                safe_to_fallback = False
+            if not safe_to_fallback:
+                raise RuntimeError(
+                    "UI Automation invocation failed and coordinate fallback was withheld because the target could have changed. Re-observe the window."
+                ) from error
             wrapper.click_input()
             return "Element clicked through Windows UI Automation input."
 
@@ -314,13 +370,12 @@ class LinuxBackend(DesktopBackend):
 
     def foreground_window(self) -> Window:
         windows = self.list_windows()
-        for window in windows:
-            accessible = _windows[window.window_id]
-            if self._state_contains(accessible, self._atspi.STATE_ACTIVE):
-                return window
-        if windows:
-            return windows[0]
-        raise RuntimeError("AT-SPI did not expose any visible windows. Check that desktop accessibility is enabled.")
+        active_window_ids = {
+            window.window_id
+            for window in windows
+            if self._state_contains(_windows[window.window_id], self._atspi.STATE_ACTIVE)
+        }
+        return _select_active_window(windows, active_window_ids)
 
     def window_by_id(self, window_id: str) -> Window:
         if window_id not in _windows:
