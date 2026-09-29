@@ -31,8 +31,8 @@ Các tool được cung cấp:
 - `list_windows`: liệt kê cửa sổ nhìn thấy và ID để chọn cửa sổ.
 - `observe_screen`: quan sát cửa sổ foreground mặc định hoặc cửa sổ được chọn; nhận `task_goal`, `visual_mode`, `detail` và `max_nodes`.
 - `capture_screen`: chụp ảnh cửa sổ được chọn khi Agent yêu cầu rõ.
-- `click_element`: kích hoạt phần tử accessibility theo ID từ lần quan sát gần nhất.
-- `set_text`: đặt text qua giao diện accessibility mà không đọc giá trị kết quả trở lại.
+- `click_element`: xin consent qua MCP elicitation, ghi audit rồi kích hoạt phần tử accessibility theo ID từ lần quan sát gần nhất.
+- `set_text`: xin consent, ghi audit rồi đặt text qua accessibility mà không đọc giá trị kết quả trở lại.
 
 ### Context theo nhu cầu Agent
 
@@ -54,6 +54,9 @@ Kết quả nêu số node đã kiểm tra, số node được trả, trạng th
 - ID phần tử là process-local, tối đa 8.000 phần tử cache và hết hạn sau hai phút.
 - Không chủ động đọc lại giá trị ô nhập. Tên của các role nhập liệu phổ biến được bỏ trước khi đưa vào context, với danh sách riêng cho Windows và Linux.
 - Không chụp màn hình trong nền và không gửi hình hoặc dữ liệu tới dịch vụ cloud từ server.
+- `click_element` và `set_text` yêu cầu client xử lý MCP elicitation; nếu client không hỗ trợ, hủy hoặc từ chối thì server chặn action.
+- Audit JSONL cục bộ ghi timestamp, action, element ID ngắn hạn, trạng thái request/consent/kết quả; không ghi text, ảnh hoặc window title. POSIX giới hạn quyền thư mục/file; Windows kế thừa ACL từ hồ sơ người dùng.
+- Consent là client-mediated: giao thức không chứng minh người thật đã nhấn duyệt vì một Agent/client policy có thể tự trả lời. Prompt có role/tên control đã lọc nhưng không hiển thị giá trị sắp nhập; consent `set_text` hiện phê duyệt target và loại thao tác, không phê duyệt chính xác nội dung.
 - Trên Windows, click dùng action UIA trước rồi mới fallback sang input tại vị trí phần tử.
 - Trên Linux, click và nhập text chỉ hoạt động khi ứng dụng cung cấp AT-SPI action hoặc EditableText; không giả định input tọa độ luôn được hỗ trợ.
 
@@ -61,8 +64,10 @@ Kết quả nêu số node đã kiểm tra, số node được trả, trạng th
 
 - `src/ancharview/server.py`: đăng ký MCP tools, xếp hạng task, chọn context và chính sách vision.
 - `src/ancharview/desktop.py`: hợp đồng backend, cache ID, Windows UIA, Linux AT-SPI và capture ảnh.
+- `src/ancharview/audit.py`: audit JSONL tối thiểu và quyền file local.
 - `src/ancharview/__main__.py`, `src/ancharview/__init__.py`: entry point và package.
 - `tests/test_vision_policy.py`: test chính sách vision, lọc context, giữ ancestor/focus và phân loại role trường nhập.
+- `tests/test_action_safety.py`: test consent accept/decline/unsupported, fail-closed và không ghi text vào audit.
 - `pyproject.toml`: package, dependencies và extras theo nền tảng.
 - `LICENSE`: toàn văn Apache License 2.0; `pyproject.toml` khai báo SPDX `Apache-2.0` để metadata package nhận diện được giấy phép.
 - `.vscode/mcp.json`: đăng ký MCP server trong VS Code.
@@ -75,6 +80,7 @@ Kết quả nêu số node đã kiểm tra, số node được trả, trạng th
 
 - `pytest -q`: 10 test đạt.
 - Sau đợt hardening P0: `pytest -q` đạt 18 test; bổ sung kiểm tra thiếu bounds, foreground Linux mơ hồ và điều kiện coordinate fallback.
+- Sau khi thêm consent/audit: `pytest -q` đạt 22 test; test consent được chấp thuận/từ chối/không hỗ trợ và xác nhận audit không chứa text.
 - `compileall`: source và test Python biên dịch cú pháp thành công.
 - MCP stdio smoke test: initialize và tools/list thành công; client thấy đủ năm tool và schema `detail` có `minimal`, `interactive`, `full`.
 - Windows runtime smoke test: UIA đọc được 30 node của cửa sổ foreground với giới hạn node; không chụp ảnh hoặc gửi input trong bước xác minh đó.
@@ -84,13 +90,14 @@ Kết quả nêu số node đã kiểm tra, số node được trả, trạng th
 
 - Chỉ xác minh runtime trên Windows trong môi trường hiện có. Linux adapter chưa được chạy trên desktop Linux thật; kết quả phụ thuộc AT-SPI, desktop environment và quyền Wayland.
 - Vision hiện là chụp ảnh cửa sổ theo yêu cầu/chính sách. OCR, computer vision để xác định phần tử trên ảnh và hành động theo pixel chưa được triển khai.
-- Chưa có adapter Chrome DevTools Protocol/DOM, hệ thống event/diff UI, `find_elements`, scroll, focus-window, wait-for, clipboard, allowlist ứng dụng hoặc bước xác nhận action nguy hiểm.
+- Chưa có adapter Chrome DevTools Protocol/DOM, hệ thống event/diff UI, `find_elements`, scroll, focus-window, wait-for, clipboard hoặc allowlist ứng dụng.
 - Quyết định gửi ảnh và mức relevance hiện dựa trên từ khóa/độ phủ accessibility; có thể cần tinh chỉnh với agent và ứng dụng thực tế.
 - Một số ứng dụng canvas/custom-rendered, remote desktop hoặc chạy quyền cao có thể không công bố đủ UIA/AT-SPI. Wayland có thể từ chối capture nếu compositor hoặc công cụ chụp không cho phép.
 - **Đã xử lý:** capture từ chối khi thiếu bounds hoặc bounds không hợp lệ; không còn fallback sang monitor/toàn output. Khi capture bị từ chối, `observe_screen` trả lỗi vision thay vì ảnh ngoài vùng đã chọn.
 - **Đã xử lý:** Linux chỉ nhận foreground khi AT-SPI xác định đúng một cửa sổ `ACTIVE`; trường hợp 0 hoặc nhiều cửa sổ active yêu cầu Agent truyền `window_id` tường minh.
 - Windows UIA vẫn materialize `children()` trước khi cắt theo ngân sách node; ứng dụng có container rất rộng vẫn có thể tốn thời gian/bộ nhớ vượt kỳ vọng của `max_nodes`.
-- **Giảm rủi ro, chưa triệt để:** trước coordinate fallback, Windows kiểm tra cửa sổ snapshot vẫn foreground, bounds không đổi, control visible và enabled. Chưa xác minh hậu điều kiện sau click và chưa có consent riêng cho action nguy hiểm.
+- **Giảm rủi ro, chưa triệt để:** trước coordinate fallback, Windows kiểm tra cửa sổ snapshot vẫn foreground, bounds không đổi, control visible và enabled. Chưa xác minh hậu điều kiện sau click.
+- `click_element` và `set_text` đã được gate bởi MCP elicitation và audit cục bộ, nhưng client có thể tự phản hồi; server không thể xác thực người thật đã duyệt. `set_text` cũng không hiển thị giá trị sẽ nhập trong prompt để tránh phát tán thêm dữ liệu, nên chưa phải consent theo nội dung.
 - Whitelist role dùng để bỏ tên trường nhập là heuristic theo role phổ biến, không phải lớp DLP tổng quát; ứng dụng tùy biến có thể công bố role khác.
 
 ## 7. Lịch sử Git liên quan
@@ -106,18 +113,18 @@ Báo cáo này mô tả phạm vi đã triển khai; các mục trong phần gi�
 
 ### Kết luận ngắn
 
-AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giám sát**, chưa nên xem là agent điều khiển desktop production hoặc chạy không giám sát. Windows đã qua smoke test đọc UIA và MCP; chưa có end-to-end test thao tác ứng dụng. Linux mới được rà code, chưa chạy trên desktop Linux thật. Ba guard P0 về phạm vi capture, foreground Linux và coordinate fallback đã được thêm; consent/audit cho action rủi ro vẫn còn thiếu.
+AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giám sát**, chưa nên xem là agent điều khiển desktop production hoặc chạy không giám sát. Windows đã qua smoke test đọc UIA và MCP; chưa có end-to-end test thao tác ứng dụng. Linux mới được rà code, chưa chạy trên desktop Linux thật. Các guard P0 về phạm vi capture, foreground Linux, coordinate fallback và consent/audit đã được thêm; consent vẫn phụ thuộc hành vi MCP host và chưa xác minh người thật.
 
 ### Phát hiện ưu tiên cao
 
 1. **Đã xử lý: phạm vi ảnh thiếu bounds.** `DesktopBackend.capture()` fail-closed nếu không có bounds hợp lệ; test bao phủ thiếu bounds và kích thước rỗng. Ảnh tự động không còn chuyển thành capture cả monitor/toàn output trong các trường hợp này.
 2. **Đã xử lý: Linux không đoán foreground.** Backend chỉ trả về khi có đúng một cửa sổ `ACTIVE`; nếu không thì trả lỗi yêu cầu chọn `window_id`.
 3. **Đã giảm rủi ro: fallback click Windows.** Cache giữ window ID và bounds tại thời điểm quan sát. Coordinate fallback chỉ thực hiện nếu cùng window còn foreground, bounds không đổi, control visible và enabled. Vẫn cần test UIA thật cho stale element và xác minh hậu điều kiện.
-4. **Chưa có guard cho hành động rủi ro cao.** `click_element` có thể nhấn Send/Delete/Pay giống như nút thông thường; chưa có allowlist, consent hay audit log. Chỉ dùng với người giám sát cho tới khi có chính sách xác nhận hành động không thể đảo ngược.
+4. **Consent không chứng minh người thật phê duyệt.** Mọi click/set_text đều gửi elicitation và bị chặn nếu không accept; nhưng MCP host/Agent có thể tự tạo phản hồi. Chưa có allowlist ứng dụng, consent theo nội dung `set_text` hoặc cơ chế xác minh riêng cho Send/Delete/Pay. Chỉ dùng với người giám sát.
 
 ### Phát hiện ưu tiên tiếp theo
 
-- Chưa có consent, allowlist hoặc audit log cho action không thể đảo ngược; không chạy tự động Send/Delete/Pay.
+- MCP elicitation/audit đã bao phủ click và set_text, nhưng chưa có allowlist hoặc consent theo đúng giá trị sẽ nhập; không chạy tự động Send/Delete/Pay.
 - `max_nodes` giới hạn số node được xếp vào kết quả, nhưng trên Windows `wrapper.children()` tạo danh sách con trước khi cắt; giao diện có container rất rộng vẫn có thể chậm hoặc tốn bộ nhớ.
 - Matching task và chọn vision dựa trên chuỗi từ khóa. Từ đồng nghĩa, ngôn ngữ khác, mục tiêu mơ hồ và substring trùng có thể làm chọn sai node hoặc bật/tắt ảnh không như mong muốn.
 - Test hiện tập trung vào policy thuần. Chưa có test backend giả lập cho stale element, cửa sổ không active, thiếu bounds, lỗi chụp, disabled control, hay kết quả action; chưa có regression test UIA thật.
@@ -131,11 +138,13 @@ AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giá
 - [x] Không chụp toàn màn hình ngầm khi bounds cửa sổ thiếu; fail-closed.
 - [x] Không đoán foreground Linux; yêu cầu chọn `window_id` nếu trạng thái `ACTIVE` không duy nhất.
 - [x] Kiểm tra foreground, bounds, visibility và enabled trước coordinate fallback Windows.
-- [ ] Thêm consent cho action có khả năng gửi, xóa, mua hoặc thay đổi dữ liệu không thể hoàn tác; bổ sung audit log local đã loại dữ liệu nhạy cảm.
+- [x] Yêu cầu MCP elicitation trước mọi click/set_text; fail-closed nếu client không hỗ trợ hoặc không accept; ghi audit JSONL local không có text/ảnh.
+- [ ] Dùng MCP host có xác nhận người dùng; giao thức không cho server chứng minh phản hồi accept đến từ người thật.
+- [ ] Quyết định chính sách consent cho nội dung `set_text` (hiện prompt không hiển thị value để tránh phát tán thêm dữ liệu).
 
 ### P1: chứng minh dùng được trên hai nền tảng
 
-- Đã có unit tests cho thiếu bounds, trạng thái active 0/nhiều cửa sổ và điều kiện fallback; tiếp tục tạo test backend cho cây rỗng, stale IDs, node cap, lỗi action và redaction.
+- Đã có unit tests cho guard capture, foreground, fallback, consent và audit; tiếp tục tạo test backend cho cây rỗng, stale IDs, node cap, lỗi action và redaction.
 - Chạy checklist thủ công trên Windows 10/11 và Linux GNOME/X11; sau đó kiểm tra Wayland riêng với quyền capture thực tế.
 - Dùng app thử nghiệm không nhạy cảm (ví dụ Notepad/text editor) để xác minh list → observe → click → set_text; xác nhận không đọc lại nội dung nhập và ảnh đúng vùng.
 - Đo thời gian và kích thước kết quả trên UI nhỏ, UI nhiều node và app custom-rendered để chọn mặc định `max_nodes` có cơ sở.
@@ -151,7 +160,7 @@ AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giá
 
 Chỉ thử trên desktop không nhạy cảm và có người theo dõi. Trên Windows, ưu tiên task đọc hoặc thao tác có thể đảo ngược; đặt `visual_mode="never"` khi không cần ảnh cho tới khi P0 về bounds được xử lý. Không bật agent tự hành cho gửi/xóa/thanh toán. Trên Linux, coi backend là chưa xác nhận cho tới khi chạy checklist AT-SPI trên desktop thật.
 
-Đánh giá này là code review theo source hiện tại, không phải chứng nhận an toàn hoặc kết quả kiểm thử Linux. Các P0 đã đánh dấu hoàn thành mới có unit test cho guard logic; vẫn cần kiểm thử Linux thật, test UIA fallback và consent/audit trước khi giới thiệu AncharView là công cụ điều khiển desktop dùng production.
+Đánh giá này là code review theo source hiện tại, không phải chứng nhận an toàn hoặc kết quả kiểm thử Linux. P0 consent/audit mới có unit test/helper và MCP tool-schema smoke test; chưa kiểm thử end-to-end với host hiển thị elicitation cho người dùng, chưa xác minh hậu điều kiện UIA và chưa chạy Linux thật. Chưa giới thiệu là công cụ desktop production.
 
 ## 10. Giấy phép
 

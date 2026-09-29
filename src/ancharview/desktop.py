@@ -29,6 +29,7 @@ class CachedElement:
     created_at: float
     window_id: str | None = None
     bounds: dict[str, int] | None = None
+    summary: str = ""
 
 
 ELEMENT_TTL_SECONDS = 120
@@ -73,6 +74,13 @@ def _can_coordinate_fallback(
     )
 
 
+def _element_summary(role: str, name: str) -> str:
+    safe_name = "".join(character for character in name if character.isprintable())[:80]
+    if not safe_name:
+        return role
+    return f"{role} named {json.dumps(safe_name, ensure_ascii=False)}"
+
+
 def _new_id(prefix: str) -> str:
     global _next_id
     _next_id += 1
@@ -84,9 +92,10 @@ def cache_element(
     value: Any,
     window_id: str | None = None,
     bounds: dict[str, int] | None = None,
+    summary: str = "",
 ) -> str:
     element_id = _new_id("e")
-    _elements[element_id] = CachedElement(platform, value, time.monotonic(), window_id, bounds)
+    _elements[element_id] = CachedElement(platform, value, time.monotonic(), window_id, bounds, summary)
     while len(_elements) > MAX_CACHED_ELEMENTS:
         _elements.pop(next(iter(_elements)))
     return element_id
@@ -123,6 +132,10 @@ class DesktopBackend:
 
     def set_text(self, element_id: str, text: str) -> str:
         raise NotImplementedError
+
+    def element_summary(self, element_id: str) -> str:
+        cached = resolve_cached_element(element_id, self.name)
+        return cached.summary or "desktop control"
 
     def capture(self, window: Window) -> bytes:
         bounds = window.bounds
@@ -224,7 +237,13 @@ class WindowsBackend(DesktopBackend):
                 name = "" if _is_text_value_role(self.name, control_type) else str(wrapper.window_text() or "")
                 automation_id = str(getattr(info, "automation_id", "") or "")
                 rect = self._rect(wrapper)
-                element_id = cache_element(self.name, wrapper, window.window_id, rect)
+                element_id = cache_element(
+                    self.name,
+                    wrapper,
+                    window.window_id,
+                    rect,
+                    _element_summary(control_type, name),
+                )
                 patterns = _windows_patterns(control_type)
                 nodes.append({
                     "element_id": element_id,
@@ -404,7 +423,7 @@ class LinuxBackend(DesktopBackend):
             try:
                 role = self._role(accessible)
                 name = "" if _is_text_value_role(self.name, role) else self._name(accessible)
-                element_id = cache_element(self.name, accessible)
+                element_id = cache_element(self.name, accessible, summary=_element_summary(role, name))
                 action_names: list[str] = []
                 try:
                     actions = accessible.queryAction()

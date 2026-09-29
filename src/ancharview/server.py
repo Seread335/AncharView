@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from typing import Annotated, Literal
 
 from mcp.server import MCPServer
-from mcp.server.mcpserver import Image
+from mcp.server.mcpserver import Context, Image
 from mcp.types import TextContent, ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, Field
 
+from .audit import write_audit_event
 from .desktop import DesktopBackend, Window, create_backend
 
 
@@ -36,6 +38,10 @@ server = MCPServer(
     ),
 )
 _backend: DesktopBackend | None = None
+
+
+class ActionApproval(BaseModel):
+    approved: bool = Field(description="True only if the desktop user explicitly approved this action.")
 
 
 def backend() -> DesktopBackend:
@@ -131,6 +137,51 @@ def _visual_decision(nodes: list[dict], task_goal: str, visual_mode: str) -> tup
     return False, "accessibility tree provides sufficient semantic content for this task"
 
 
+async def _confirmed_action(
+    context: Context,
+    action: str,
+    element_id: str,
+    target_description: str,
+    operation: Callable[[], str],
+) -> str:
+    write_audit_event("request", action, element_id, "pending")
+    try:
+        approval = await context.elicit(
+            message=(
+                f"AncharView requests permission to {action} {target_description} (element ID {element_id}). "
+                "Ask the user for explicit approval. If approval cannot be obtained, deny the action."
+            ),
+            schema=ActionApproval,
+        )
+    except Exception:
+        write_audit_event("consent", action, element_id, "unavailable")
+        raise PermissionError("Action blocked because this MCP client could not complete a consent request.") from None
+
+    if approval.action != "accept" or approval.data is None or not approval.data.approved:
+        status = "declined" if approval.action == "decline" else "cancelled"
+        write_audit_event("consent", action, element_id, status)
+        raise PermissionError("Action was not approved; no desktop change was made.")
+
+    write_audit_event("consent", action, element_id, "approved")
+    write_audit_event("action", action, element_id, "started")
+    try:
+        result = operation()
+    except Exception:
+        try:
+            write_audit_event("action", action, element_id, "failed")
+        except OSError:
+            raise RuntimeError("Action failed and the audit outcome could not be saved.") from None
+        raise
+
+    try:
+        write_audit_event("action", action, element_id, "succeeded")
+    except OSError:
+        raise RuntimeError(
+            "The action may have completed, but its audit outcome could not be saved. Inspect the desktop before retrying."
+        ) from None
+    return result
+
+
 @server.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False))
 def list_windows() -> str:
     """List visible top-level desktop windows. Use a returned window_id to inspect a specific app."""
@@ -192,16 +243,32 @@ def capture_screen(
     return Image(data=backend().capture(_window(window_id)), format="png")
 
 
-@server.tool()
-def click_element(element_id: str) -> str:
-    """Activate an element_id returned by a recent observe_screen call using the platform accessibility API."""
-    return backend().click(element_id)
+@server.tool(annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=False))
+async def click_element(element_id: str, context: Context) -> str:
+    """Ask for MCP client consent, audit locally, then activate a recently observed element."""
+    desktop = backend()
+    target_description = desktop.element_summary(element_id)
+    return await _confirmed_action(
+        context,
+        "click",
+        element_id,
+        target_description,
+        lambda: desktop.click(element_id),
+    )
 
 
-@server.tool()
-def set_text(element_id: str, text: str) -> str:
-    """Set text through Windows UIA or Linux AT-SPI EditableText without reading the resulting value back."""
-    return backend().set_text(element_id, text)
+@server.tool(annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=False))
+async def set_text(element_id: str, text: str, context: Context) -> str:
+    """Ask for MCP client consent, audit the action without logging text, then set an editable control."""
+    desktop = backend()
+    target_description = desktop.element_summary(element_id)
+    return await _confirmed_action(
+        context,
+        "set_text",
+        element_id,
+        target_description,
+        lambda: desktop.set_text(element_id, text),
+    )
 
 
 def main() -> None:
