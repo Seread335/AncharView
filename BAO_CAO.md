@@ -64,6 +64,7 @@ Kết quả nêu số node đã kiểm tra, số node được trả, trạng th
 - `src/ancharview/__main__.py`, `src/ancharview/__init__.py`: entry point và package.
 - `tests/test_vision_policy.py`: test chính sách vision, lọc context, giữ ancestor/focus và phân loại role trường nhập.
 - `pyproject.toml`: package, dependencies và extras theo nền tảng.
+- `LICENSE`: toàn văn Apache License 2.0; `pyproject.toml` khai báo SPDX `Apache-2.0` để metadata package nhận diện được giấy phép.
 - `.vscode/mcp.json`: đăng ký MCP server trong VS Code.
 - `.github/copilot-instructions.md`: các nguyên tắc phát triển và giới hạn nền tảng.
 - `README.md`: cài đặt, cấu hình, lệnh chạy, nền tảng và cây source.
@@ -149,3 +150,7 @@ AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giá
 Chỉ thử trên desktop không nhạy cảm và có người theo dõi. Trên Windows, ưu tiên task đọc hoặc thao tác có thể đảo ngược; đặt `visual_mode="never"` khi không cần ảnh cho tới khi P0 về bounds được xử lý. Không bật agent tự hành cho gửi/xóa/thanh toán. Trên Linux, coi backend là chưa xác nhận cho tới khi chạy checklist AT-SPI trên desktop thật.
 
 Đánh giá này là code review theo source hiện tại, không phải chứng nhận an toàn hoặc kết quả kiểm thử Linux. Các mục P0/P1 cần được xử lý và kiểm tra trước khi giới thiệu AncharView là công cụ điều khiển desktop dùng production.
+
+## 10. Giấy phép
+
+Repo sử dụng Apache License 2.0. Toàn văn nằm trong `LICENSE`, README liên kết tới điều khoản, và metadata package khai báo SPDX `Apache-2.0`. Không tự điền chủ sở hữu bản quyền vào mẫu phụ lục; tên chủ sở hữu cụ thể cần được chủ dự án xác nhận nếu muốn thêm copyright notice riêng.

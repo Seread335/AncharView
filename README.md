@@ -76,3 +76,7 @@ The server uses MCP stdio. Its VS Code registration in `.vscode/mcp.json` uses t
 AncharView only reads or changes the desktop when the connected agent calls a tool. It does not send screen content to a remote service itself. Element IDs are process-local and expire after two minutes.
 
 For the implementation history, design decisions, verification, and current limitations, see [BAO_CAO.md](BAO_CAO.md).
+
+## License
+
+AncharView is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for the full terms.
