@@ -56,7 +56,8 @@ Kết quả nêu số node đã kiểm tra, số node được trả, trạng th
 - Không chụp màn hình trong nền và không gửi hình hoặc dữ liệu tới dịch vụ cloud từ server.
 - `click_element` và `set_text` yêu cầu client xử lý MCP elicitation; nếu client không hỗ trợ, hủy hoặc từ chối thì server chặn action.
 - Audit JSONL cục bộ ghi timestamp, action, element ID ngắn hạn, trạng thái request/consent/kết quả; không ghi text, ảnh hoặc window title. POSIX giới hạn quyền thư mục/file; Windows kế thừa ACL từ hồ sơ người dùng.
-- Consent là client-mediated: giao thức không chứng minh người thật đã nhấn duyệt vì một Agent/client policy có thể tự trả lời. Prompt có role/tên control đã lọc nhưng không hiển thị giá trị sắp nhập; consent `set_text` hiện phê duyệt target và loại thao tác, không phê duyệt chính xác nội dung.
+- Consent là client-mediated: server chặn client không khai báo MCP form elicitation, nhưng giao thức không chứng minh người thật đã nhấn duyệt vì một Agent/client policy có thể tự trả lời. Prompt có role/tên control đã lọc và hiển thị chính xác JSON-escaped value của `set_text`; host nhận giá trị này và có thể giữ lại, còn audit local không ghi nó.
+- Khi dùng trong VS Code, cấu hình **Chat: Manage Tool Approval** để không pre-approve `click_element`/`set_text`; có thể đặt hai tool này thành `false` trong `chat.tools.eligibleForAutoApproval`. Không dùng Allow all/Autopilot cho desktop actions.
 - Trên Windows, click dùng action UIA trước rồi mới fallback sang input tại vị trí phần tử.
 - Trên Linux, click và nhập text chỉ hoạt động khi ứng dụng cung cấp AT-SPI action hoặc EditableText; không giả định input tọa độ luôn được hỗ trợ.
 
@@ -80,9 +81,10 @@ Kết quả nêu số node đã kiểm tra, số node được trả, trạng th
 
 - `pytest -q`: 10 test đạt.
 - Sau đợt hardening P0: `pytest -q` đạt 18 test; bổ sung kiểm tra thiếu bounds, foreground Linux mơ hồ và điều kiện coordinate fallback.
-- Sau khi thêm consent/audit: `pytest -q` đạt 22 test; test consent được chấp thuận/từ chối/không hỗ trợ và xác nhận audit không chứa text.
+- Sau khi thêm consent/audit: `pytest -q` đạt 22 test; test consent accept/decline/client thiếu form capability, xác nhận exact `set_text` preview hiện trong consent và không xuất hiện trong audit.
 - `compileall`: source và test Python biên dịch cú pháp thành công.
 - MCP stdio smoke test: initialize và tools/list thành công; client thấy đủ năm tool và schema `detail` có `minimal`, `interactive`, `full`.
+- Kiểm tra bundle Copilot cài local thấy các code path `elicitation/create` và form elicitation; đây không phải kiểm thử GUI/runtime và không xác nhận session hiện tại đang bật manual approval.
 - Windows runtime smoke test: UIA đọc được 30 node của cửa sổ foreground với giới hạn node; không chụp ảnh hoặc gửi input trong bước xác minh đó.
 - `git diff --check`: không phát hiện whitespace errors.
 
@@ -97,7 +99,8 @@ Kết quả nêu số node đã kiểm tra, số node được trả, trạng th
 - **Đã xử lý:** Linux chỉ nhận foreground khi AT-SPI xác định đúng một cửa sổ `ACTIVE`; trường hợp 0 hoặc nhiều cửa sổ active yêu cầu Agent truyền `window_id` tường minh.
 - Windows UIA vẫn materialize `children()` trước khi cắt theo ngân sách node; ứng dụng có container rất rộng vẫn có thể tốn thời gian/bộ nhớ vượt kỳ vọng của `max_nodes`.
 - **Giảm rủi ro, chưa triệt để:** trước coordinate fallback, Windows kiểm tra cửa sổ snapshot vẫn foreground, bounds không đổi, control visible và enabled. Chưa xác minh hậu điều kiện sau click.
-- `click_element` và `set_text` đã được gate bởi MCP elicitation và audit cục bộ, nhưng client có thể tự phản hồi; server không thể xác thực người thật đã duyệt. `set_text` cũng không hiển thị giá trị sẽ nhập trong prompt để tránh phát tán thêm dữ liệu, nên chưa phải consent theo nội dung.
+- `click_element` và `set_text` đã được gate bởi form elicitation và audit cục bộ. Client phải khai báo capability; nếu không, action bị chặn. `set_text` hiển thị đúng giá trị cho host để người duyệt kiểm tra; host có thể ghi nhận nội dung này ngoài audit của AncharView. README hướng dẫn đặt VS Code ở chế độ manual approval.
+- Giới hạn còn lại: server không thể xác thực người trả lời elicitation là người thật. VS Code có tool-approval controls, nhưng cần kiểm thử GUI theo permission mode đang dùng; Allow all/Autopilot có thể tự phản hồi.
 - Whitelist role dùng để bỏ tên trường nhập là heuristic theo role phổ biến, không phải lớp DLP tổng quát; ứng dụng tùy biến có thể công bố role khác.
 
 ## 7. Lịch sử Git liên quan
@@ -120,11 +123,11 @@ AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giá
 1. **Đã xử lý: phạm vi ảnh thiếu bounds.** `DesktopBackend.capture()` fail-closed nếu không có bounds hợp lệ; test bao phủ thiếu bounds và kích thước rỗng. Ảnh tự động không còn chuyển thành capture cả monitor/toàn output trong các trường hợp này.
 2. **Đã xử lý: Linux không đoán foreground.** Backend chỉ trả về khi có đúng một cửa sổ `ACTIVE`; nếu không thì trả lỗi yêu cầu chọn `window_id`.
 3. **Đã giảm rủi ro: fallback click Windows.** Cache giữ window ID và bounds tại thời điểm quan sát. Coordinate fallback chỉ thực hiện nếu cùng window còn foreground, bounds không đổi, control visible và enabled. Vẫn cần test UIA thật cho stale element và xác minh hậu điều kiện.
-4. **Consent không chứng minh người thật phê duyệt.** Mọi click/set_text đều gửi elicitation và bị chặn nếu không accept; nhưng MCP host/Agent có thể tự tạo phản hồi. Chưa có allowlist ứng dụng, consent theo nội dung `set_text` hoặc cơ chế xác minh riêng cho Send/Delete/Pay. Chỉ dùng với người giám sát.
+4. **Consent không chứng minh người thật phê duyệt.** Mọi click/set_text yêu cầu client khai báo form elicitation và bị chặn nếu không accept; prompt `set_text` hiển thị giá trị chính xác. Tuy vậy MCP host/Agent có thể tự tạo phản hồi hoặc lưu prompt. README chỉ cách yêu cầu VS Code manual approval; cần xác nhận session không ở Allow all/Autopilot. Chưa có allowlist ứng dụng hay cơ chế xác minh riêng cho Send/Delete/Pay.
 
 ### Phát hiện ưu tiên tiếp theo
 
-- MCP elicitation/audit đã bao phủ click và set_text, nhưng chưa có allowlist hoặc consent theo đúng giá trị sẽ nhập; không chạy tự động Send/Delete/Pay.
+- MCP elicitation/audit đã bao phủ click và set_text, gồm preview đúng giá trị nhập; chưa có allowlist ứng dụng hoặc xác minh danh tính người duyệt. Không chạy tự động Send/Delete/Pay.
 - `max_nodes` giới hạn số node được xếp vào kết quả, nhưng trên Windows `wrapper.children()` tạo danh sách con trước khi cắt; giao diện có container rất rộng vẫn có thể chậm hoặc tốn bộ nhớ.
 - Matching task và chọn vision dựa trên chuỗi từ khóa. Từ đồng nghĩa, ngôn ngữ khác, mục tiêu mơ hồ và substring trùng có thể làm chọn sai node hoặc bật/tắt ảnh không như mong muốn.
 - Test hiện tập trung vào policy thuần. Chưa có test backend giả lập cho stale element, cửa sổ không active, thiếu bounds, lỗi chụp, disabled control, hay kết quả action; chưa có regression test UIA thật.
@@ -139,8 +142,10 @@ AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giá
 - [x] Không đoán foreground Linux; yêu cầu chọn `window_id` nếu trạng thái `ACTIVE` không duy nhất.
 - [x] Kiểm tra foreground, bounds, visibility và enabled trước coordinate fallback Windows.
 - [x] Yêu cầu MCP elicitation trước mọi click/set_text; fail-closed nếu client không hỗ trợ hoặc không accept; ghi audit JSONL local không có text/ảnh.
-- [ ] Dùng MCP host có xác nhận người dùng; giao thức không cho server chứng minh phản hồi accept đến từ người thật.
-- [ ] Quyết định chính sách consent cho nội dung `set_text` (hiện prompt không hiển thị value để tránh phát tán thêm dữ liệu).
+- [x] Chặn mutation nếu MCP client không khai báo form elicitation; hiển thị chính xác giá trị `set_text` cho client và không ghi nó vào audit local.
+- [x] Hướng dẫn cấu hình VS Code yêu cầu duyệt thủ công cho `click_element`/`set_text` bằng Chat: Manage Tool Approval hoặc `chat.tools.eligibleForAutoApproval`.
+- [ ] Kiểm thử end-to-end trong VS Code Manual permissions: xác minh form elicitation xuất hiện, từ chối không đổi UI và chấp nhận chỉ chạy một lần.
+- [ ] Server không thể chứng minh phản hồi accept đến từ người thật hoặc ngăn host giữ prompt/value; cần giữ host tin cậy và giám sát người dùng.
 
 ### P1: chứng minh dùng được trên hai nền tảng
 
@@ -160,7 +165,7 @@ AncharView hiện là **prototype kỹ thuật có thể thử nghiệm có giá
 
 Chỉ thử trên desktop không nhạy cảm và có người theo dõi. Trên Windows, ưu tiên task đọc hoặc thao tác có thể đảo ngược; đặt `visual_mode="never"` khi không cần ảnh cho tới khi P0 về bounds được xử lý. Không bật agent tự hành cho gửi/xóa/thanh toán. Trên Linux, coi backend là chưa xác nhận cho tới khi chạy checklist AT-SPI trên desktop thật.
 
-Đánh giá này là code review theo source hiện tại, không phải chứng nhận an toàn hoặc kết quả kiểm thử Linux. P0 consent/audit mới có unit test/helper và MCP tool-schema smoke test; chưa kiểm thử end-to-end với host hiển thị elicitation cho người dùng, chưa xác minh hậu điều kiện UIA và chưa chạy Linux thật. Chưa giới thiệu là công cụ desktop production.
+Đánh giá này là code review theo source hiện tại, không phải chứng nhận an toàn hoặc kết quả kiểm thử Linux. P0 consent/audit có unit test/helper và MCP tool-schema smoke test; chưa kiểm thử end-to-end với VS Code approval UX, chưa xác minh hậu điều kiện UIA và chưa chạy Linux thật. Server không thể tự xác thực người duyệt; cần host bật xác nhận thủ công. Chưa giới thiệu là công cụ desktop production.
 
 ## 10. Giấy phép
 
@@ -183,3 +188,4 @@ Yêu cầu sản phẩm do chủ dự án bổ sung: AncharView cần kết nố
 - Cung cấp một lệnh khởi chạy ổn định qua virtualenv/package, tránh cấu hình phụ thuộc đường dẫn Windows/Linux.
 - Chỉ bổ sung HTTP/Streamable HTTP khi có nhu cầu Agent cụ thể; nếu bật, giới hạn localhost, xác thực và quyền truy cập desktop rõ ràng.
 - Duy trì test tương thích giao thức độc lập với OS; backend UIA/AT-SPI vẫn là phần riêng theo nền tảng.
+(theo mình nghĩ nếu muốn phù hợp cho tất cả thì mình làm theo kiểu chung, cái nào có hỗ trợ MCP thì sử dụng, mình thì cũng ko làm gì cao siêu mà chỉ là hỗ trợ một chút như cách chúng ta đã thiết kế "đây chỉ là ý kiến thảo luận ko cần làm ngay")

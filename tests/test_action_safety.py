@@ -17,6 +17,7 @@ class FakeConsentContext:
         self.action = action
         self.approved = approved
         self.message = ""
+        self.client_capabilities = SimpleNamespace(elicitation=SimpleNamespace(form=SimpleNamespace()))
 
     async def elicit(self, message: str, schema: type[ActionApproval]) -> SimpleNamespace:
         self.message = message
@@ -31,13 +32,20 @@ class ActionConsentTests(unittest.IsolatedAsyncioTestCase):
             context = FakeConsentContext("accept", approved=True)
 
             with patch.dict(os.environ, {"ANCHARVIEW_AUDIT_PATH": str(audit_path)}):
-                result = await _confirmed_action(context, "set_text", "e1", 'Edit named "recipient"', lambda: secret_text)
+                result = await _confirmed_action(
+                    context,
+                    "set_text",
+                    "e1",
+                    'Edit named "recipient"',
+                    lambda: secret_text,
+                    proposed_value=secret_text,
+                )
                 audit_contents = audit_path.read_text(encoding="utf-8")
                 records = [json.loads(line) for line in audit_contents.splitlines()]
 
         self.assertEqual(result, secret_text)
         self.assertIn('Edit named "recipient"', context.message)
-        self.assertNotIn(secret_text, context.message)
+        self.assertIn(json.dumps(secret_text), context.message)
         self.assertEqual([record["status"] for record in records], ["pending", "approved", "started", "succeeded"])
         self.assertNotIn(secret_text, audit_contents)
 
@@ -59,10 +67,15 @@ class ActionConsentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_client_without_consent_support_fails_closed(self) -> None:
         class UnsupportedContext:
+            client_capabilities = None
+            elicit_called = False
+
             async def elicit(self, **kwargs: object) -> None:
+                self.elicit_called = True
                 raise NotImplementedError
 
         with tempfile.TemporaryDirectory() as directory:
+            context = UnsupportedContext()
             action_ran = False
 
             def operation() -> str:
@@ -71,10 +84,11 @@ class ActionConsentTests(unittest.IsolatedAsyncioTestCase):
                 return "done"
 
             with patch.dict(os.environ, {"ANCHARVIEW_AUDIT_PATH": str(Path(directory) / "audit.jsonl")}):
-                with self.assertRaisesRegex(PermissionError, "could not complete a consent request"):
-                    await _confirmed_action(UnsupportedContext(), "click", "e3", "Button named \"Delete\"", operation)
+                with self.assertRaisesRegex(PermissionError, "did not declare form elicitation support"):
+                    await _confirmed_action(context, "click", "e3", "Button named \"Delete\"", operation)
 
         self.assertFalse(action_ran)
+        self.assertFalse(context.elicit_called)
 
 
 class AuditLogTests(unittest.TestCase):

@@ -34,14 +34,15 @@ server = MCPServer(
     "AncharView",
     instructions=(
         "Use observe_screen with the task goal. It targets the foreground window by default, returns a bounded "
-        "accessibility tree, and includes a cropped image only when visual_mode or accessibility coverage calls for it."
+        "accessibility tree, and includes a cropped image only when visual_mode or accessibility coverage calls for it. "
+        "click_element and set_text require client form elicitation; set_text sends its exact proposed value to the client for approval."
     ),
 )
 _backend: DesktopBackend | None = None
 
 
 class ActionApproval(BaseModel):
-    approved: bool = Field(description="True only if the desktop user explicitly approved this action.")
+    approved: bool = Field(description="True only if the user approved the displayed target and exact action details.")
 
 
 def backend() -> DesktopBackend:
@@ -143,14 +144,29 @@ async def _confirmed_action(
     element_id: str,
     target_description: str,
     operation: Callable[[], str],
+    proposed_value: str | None = None,
 ) -> str:
     write_audit_event("request", action, element_id, "pending")
+    capabilities = context.client_capabilities
+    elicitation = getattr(capabilities, "elicitation", None)
+    if elicitation is None or getattr(elicitation, "form", None) is None:
+        write_audit_event("consent", action, element_id, "unavailable")
+        raise PermissionError("Action blocked because this MCP client did not declare form elicitation support.")
+
+    message = (
+        f"AncharView requests permission to {action} {target_description} (element ID {element_id}). "
+        "Ask the user for explicit approval. If approval cannot be obtained, deny the action."
+    )
+    if proposed_value is not None:
+        message += (
+            " Exact text to be entered: "
+            f"{json.dumps(proposed_value, ensure_ascii=False)}. "
+            "This value is shown for consent but is never written to AncharView's audit log."
+        )
+
     try:
         approval = await context.elicit(
-            message=(
-                f"AncharView requests permission to {action} {target_description} (element ID {element_id}). "
-                "Ask the user for explicit approval. If approval cannot be obtained, deny the action."
-            ),
+            message=message,
             schema=ActionApproval,
         )
     except Exception:
@@ -259,7 +275,7 @@ async def click_element(element_id: str, context: Context) -> str:
 
 @server.tool(annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=False))
 async def set_text(element_id: str, text: str, context: Context) -> str:
-    """Ask for MCP client consent, audit the action without logging text, then set an editable control."""
+    """Ask MCP consent showing the exact text to the client, audit without logging it, then set an editable control."""
     desktop = backend()
     target_description = desktop.element_summary(element_id)
     return await _confirmed_action(
@@ -268,6 +284,7 @@ async def set_text(element_id: str, text: str, context: Context) -> str:
         element_id,
         target_description,
         lambda: desktop.set_text(element_id, text),
+        proposed_value=text,
     )
 
 
