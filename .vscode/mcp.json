@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "ancharview": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}/src/AncharView.Server/AncharView.Server.csproj"
+      ]
+    }
+  }
+}
