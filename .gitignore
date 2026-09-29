@@ -1,5 +1,10 @@
 **/bin/
 **/obj/
+.venv/
+*.egg-info/
+.pytest_cache/
+__pycache__/
+*.py[cod]
 .vs/
 .idea/
 *.user

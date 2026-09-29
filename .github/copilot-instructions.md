@@ -1,7 +1,8 @@
 # AncharView project guidance
 
-- This is a Windows-only MCP stdio server built with the official C# SDK: https://github.com/modelcontextprotocol/csharp-sdk
-- Keep stdout reserved for MCP protocol traffic. Send diagnostics to stderr through `Microsoft.Extensions.Logging`.
-- Prefer Windows UI Automation structure and control patterns over coordinate actions. Keep tree traversal bounded and element IDs short-lived.
-- Do not read back text field values or capture the desktop automatically. Keep screenshot capture an explicit fallback tool.
-- Preserve the Windows user-session boundary and document UI Automation provider limitations.
+- This is a cross-platform MCP stdio server using the official Python SDK: https://github.com/modelcontextprotocol/python-sdk
+- Keep stdout reserved for MCP protocol traffic; use Python logging for diagnostics.
+- Use Windows UI Automation on Windows and AT-SPI on Linux. Keep platform-specific code behind backend adapters.
+- Observation must use the agent's `task_goal`, select the foreground window by default, bound tree traversal, and include cropped vision only according to `visual_mode` and accessibility coverage.
+- Never capture in the background or read back text field values. Keep element IDs process-local and short-lived.
+- Document Linux AT-SPI and Wayland permissions; do not silently claim unsupported input or screen capture works.

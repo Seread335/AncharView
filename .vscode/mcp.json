@@ -2,12 +2,14 @@
   "servers": {
     "ancharview": {
       "type": "stdio",
-      "command": "dotnet",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
       "args": [
-        "run",
-        "--project",
-        "${workspaceFolder}/src/AncharView.Server/AncharView.Server.csproj"
-      ]
+        "-m",
+        "ancharview"
+      ],
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      }
     }
   }
 }

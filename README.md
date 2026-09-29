@@ -1,33 +1,60 @@
 # AncharView
 
-AncharView is a Windows MCP server that gives desktop agents a structured view of the UI and lets them act on accessible controls. It uses Windows UI Automation first; screenshot capture remains available as a visual fallback.
+AncharView is a cross-platform MCP server for desktop agents. It combines accessible UI structure with vision instead of replacing screenshots: agents provide a task goal, AncharView inspects the foreground window, ranks matching controls, and attaches a cropped image only when the goal is visual or accessibility data is insufficient.
 
-## Features
+## MCP tools
 
 - `list_windows`: enumerate visible top-level windows.
-- `inspect_screen`: return a bounded UI Automation tree for a window or the foreground window. Each node includes an `element_id`, accessible name, role, bounds, and supported interaction patterns.
-- `click_element`: activate a node from an inspection result through UI Automation, falling back to the provider's clickable point.
-- `set_text`: set an editable control through its UI Automation Value pattern.
-- `capture_screen`: return the virtual desktop as a PNG image for visual-only content.
+- `observe_screen`: inspect the foreground window or a selected window, return a bounded accessibility tree with task relevance, and apply `visual_mode=auto|always|never`.
+- `capture_screen`: explicitly return a PNG crop of the selected or foreground window.
+- `click_element`: activate an element ID from a recent observation.
+- `set_text`: set a text control through its accessibility interface without reading the resulting value back.
 
-The server does not continuously capture or upload the desktop. Tools run only when called by the connected MCP client. Text values are not read back, element traversal is bounded, and unsupported text controls fail rather than using simulated typing.
+`auto` includes vision for visual goals such as colors, layout, icons, charts, diagrams, and images, or when the accessibility tree has too little useful content. It avoids sending image tokens for ordinary controls with a useful accessibility tree. No capture runs in the background.
 
-## Requirements
+`observe_screen` also accepts `detail=minimal|interactive|full`: minimal keeps task matches and focus, interactive (default) keeps relevant controls and their ancestors, and full returns the bounded tree. `max_nodes` bounds both traversal and returned context. The result reports inspected and filtered node counts so the agent can request more detail when needed.
 
-- Windows 10 or later
-- .NET 10 SDK
-- An MCP client that supports stdio servers
+## Platforms
+
+- Windows 10 or later: Windows UI Automation through `pywinauto`.
+- Linux: AT-SPI through the system `pyatspi` binding; install the binding and accessibility service with the distribution package manager.
+- Screenshots: `mss` on Windows and X11; `grim` is used for cropped Wayland captures when installed.
+
+On Wayland, screenshots and input may be restricted by the compositor. AT-SPI must be enabled by the desktop session. Linux accessibility support varies across GNOME, KDE, and other environments. Applications that draw their own controls may expose limited semantics; `observe_screen` then attaches an image in auto mode.
+
+## Install
+
+Windows PowerShell:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python -m pip install -e ".[windows]"
+```
+
+Linux (Debian/Ubuntu with GNOME AT-SPI packages):
+
+```bash
+sudo apt install python3-gi python3-pyatspi at-spi2-core grim
+python3 -m venv --system-site-packages .venv
+.venv/bin/python -m pip install -e ".[linux]"
+```
+
+Use `--system-site-packages` so the venv can see the distribution's `pyatspi` binding. For other distributions, install the equivalent AT-SPI packages.
 
 ## Run
 
+Windows PowerShell:
+
 ```powershell
-dotnet run --project src/AncharView.Server/AncharView.Server.csproj
+.\.venv\Scripts\python -m ancharview
 ```
 
-The server uses stdio for MCP messages; diagnostics are written to stderr. A VS Code MCP configuration is included in `.vscode/mcp.json`.
+Linux:
 
-## Limitations
+```bash
+.venv/bin/python -m ancharview
+```
 
-UI Automation quality depends on each application's accessibility provider. Canvas-based, remote-desktop, elevated, and custom-rendered interfaces may expose little or no semantic structure; use `capture_screen` for those cases. AncharView must run in the same Windows user session as the desktop. Windows security boundaries can prevent interaction with elevated applications.
+The server uses MCP stdio. Its VS Code registration in `.vscode/mcp.json` uses the Windows virtualenv path; on Linux, change `command` to `${workspaceFolder}/.venv/bin/python`. Diagnostics go to stderr. A task-aware call can be as simple as `observe_screen(task_goal="click the Save button")`. For a visual task, use `task_goal="compare the chart colors"`; `auto` will include the window image alongside structured nodes.
 
-The `element_id` values are process-local and intended for a recent inspection result. Inspect again after the UI changes.
+AncharView only reads or changes the desktop when the connected agent calls a tool. It does not send screen content to a remote service itself. Element IDs are process-local and expire after two minutes.
