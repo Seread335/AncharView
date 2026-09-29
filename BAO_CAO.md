@@ -84,6 +84,8 @@ Kết quả nêu số node đã kiểm tra, số node được trả, trạng th
 - Sau khi thêm consent/audit: `pytest -q` đạt 22 test; test consent accept/decline/client thiếu form capability, xác nhận exact `set_text` preview hiện trong consent và không xuất hiện trong audit.
 - `compileall`: source và test Python biên dịch cú pháp thành công.
 - MCP stdio smoke test: initialize và tools/list thành công; client thấy đủ năm tool và schema `detail` có `minimal`, `interactive`, `full`.
+- MCP form-capability smoke test: initialize với `elicitation.form` và tools/list thành công; `click_element`/`set_text` được đánh dấu destructive, `Context` không lộ trong schema.
+- Thử round-trip decline qua MCP SDK client chưa tới consent: client liệt kê bốn cửa sổ nhưng không cửa sổ nào trả accessibility node trong phiên test; script dừng trước `click_element`, không gửi input. Cần lặp lại trong VS Code phiên desktop có node UIA.
 - Kiểm tra bundle Copilot cài local thấy các code path `elicitation/create` và form elicitation; đây không phải kiểm thử GUI/runtime và không xác nhận session hiện tại đang bật manual approval.
 - Windows runtime smoke test: UIA đọc được 30 node của cửa sổ foreground với giới hạn node; không chụp ảnh hoặc gửi input trong bước xác minh đó.
 - `git diff --check`: không phát hiện whitespace errors.
